@@ -1,0 +1,142 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-destructive: var(--destructive);
+  --font-sans: var(--app-font-sans);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --background: #060D0A;
+  --foreground: #FFFFFF;
+  --border: rgba(62,222,114,0.12);
+  --card: #0C1A12;
+  --card-foreground: #FFFFFF;
+  --primary: #3EDE72;
+  --primary-foreground: #060D0A;
+  --muted: #1A2E1F;
+  --muted-foreground: rgba(255,255,255,0.45);
+  --accent: #00FF88;
+  --destructive: #FF4444;
+  --ring: rgba(62,222,114,0.4);
+  --app-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --radius: 0.875rem;
+
+  --loop-green: #3EDE72;
+  --loop-green-dim: #00A850;
+  --loop-green-glow: rgba(62,222,114,0.18);
+  --loop-bg: #060D0A;
+  --loop-card: #0C1A12;
+  --loop-card-hover: #112017;
+  --loop-surface: #0F201A;
+}
+
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { height: 100%; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--loop-bg);
+    color: var(--foreground);
+    font-family: var(--app-font-sans);
+    min-height: 100%;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root { min-height: 100svh; display: flex; flex-direction: column; }
+}
+
+@layer utilities {
+  .loop-card {
+    background: var(--loop-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+  }
+  .loop-card:hover {
+    background: var(--loop-card-hover);
+    border-color: rgba(62,222,114,0.22);
+  }
+  .glow-text {
+    color: var(--loop-green);
+    text-shadow: 0 0 20px rgba(62,222,114,0.5);
+  }
+  .glow-border {
+    border-color: var(--loop-green);
+    box-shadow: 0 0 0 1px rgba(62,222,114,0.3), 0 0 20px rgba(62,222,114,0.1);
+  }
+  .pulse-live {
+    animation: pulse-green 2s ease-in-out infinite;
+  }
+  .btn-primary {
+    background: var(--loop-green);
+    color: var(--loop-bg);
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: 100%;
+    letter-spacing: 0.01em;
+  }
+  .btn-primary:hover { filter: brightness(1.1); transform: scale(1.01); }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: transparent;
+    color: rgba(255,255,255,0.6);
+    font-weight: 500;
+    border-radius: 999px;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9rem;
+    border: 1px solid rgba(255,255,255,0.1);
+    cursor: pointer;
+    transition: all 0.15s;
+    width: 100%;
+  }
+  .btn-ghost:hover { border-color: rgba(255,255,255,0.25); color: #fff; }
+  .speaking-ring {
+    animation: speaking-pulse 0.8s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(62,222,114,0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(62,222,114,0); }
+}
+
+@keyframes speaking-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(62,222,114,0.9), 0 0 0 6px rgba(62,222,114,0.2); }
+  50% { box-shadow: 0 0 0 2px rgba(62,222,114,1), 0 0 0 10px rgba(62,222,114,0); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid rgba(62,222,114,0.2);
+  border-top-color: var(--loop-green);
+  border-radius: 50%;
+  animation: spin-slow 0.7s linear infinite;
+  display: inline-block;
+}
