@@ -23,6 +23,15 @@ export interface JoinResult {
   providerRoomId: string;
 }
 
+// Shape returned by auth.rald.cloud /auth/register and /auth/login
+interface AuthServerUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  createdAt: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -66,16 +75,30 @@ export async function guestRegister(
 ): Promise<{ token: string; user: AuthUser }> {
   const email = `guest_${Math.random().toString(36).substring(2, 10)}@loop.guest`;
   const password = Math.random().toString(36).substring(2, 18);
+
+  // Auth server validates 'name', not 'displayName'
   const res = await fetch(`${AUTH_URL}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, displayName }),
+    body: JSON.stringify({ email, password, name: displayName }),
   });
-  if (!res.ok) throw new Error(`Auth register failed: ${res.status}`);
-  const data = (await res.json()) as { token: string; user: AuthUser };
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Auth register failed: ${res.status} ${detail}`);
+  }
+
+  const data = (await res.json()) as { token: string; user: AuthServerUser };
+
+  const user: AuthUser = {
+    id: data.user.id,
+    email: data.user.email,
+    raldId: data.user.id,           // auth server uses 'id'; alias as raldId
+    displayName: displayName,       // use the display name the user typed
+  };
+
   localStorage.setItem("loop_jwt", data.token);
-  localStorage.setItem("loop_user", JSON.stringify({ ...data.user, displayName }));
-  return data;
+  localStorage.setItem("loop_user", JSON.stringify(user));
+  return { token: data.token, user };
 }
 
 // ── Rooms ─────────────────────────────────────────────────────────────────────
@@ -147,11 +170,12 @@ export async function joinRoom(
 }
 
 export async function leaveRoom(roomId: string): Promise<void> {
-  await fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/leave`, {
+  // fire-and-forget — never throws, never intercepts auth
+  fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/leave`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ product: "loop" }),
-  }).catch(() => {/* non-fatal */});
+  }).catch(() => { /* non-fatal */ });
 }
 
 export async function getParticipants(

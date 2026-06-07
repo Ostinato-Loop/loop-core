@@ -9,6 +9,8 @@ export interface LocalUser {
   isGuest: boolean;
 }
 
+type StoredUser = AuthUser & { displayName?: string; region?: string; isGuest?: boolean };
+
 export function useAuth() {
   const [user, setUser] = useState<LocalUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,14 +21,10 @@ export function useAuth() {
     const token = localStorage.getItem("loop_jwt");
     if (stored && token) {
       try {
-        const parsed = JSON.parse(stored) as AuthUser & {
-          displayName?: string;
-          region?: string;
-          isGuest?: boolean;
-        };
+        const parsed = JSON.parse(stored) as StoredUser;
         setUser({
           id: parsed.id,
-          raldId: parsed.raldId,
+          raldId: parsed.raldId ?? parsed.id,
           displayName: parsed.displayName ?? "Listener",
           region: parsed.region ?? "all",
           isGuest: parsed.isGuest ?? true,
@@ -52,14 +50,14 @@ export function useAuth() {
       const { user: authUser } = await guestRegister(displayName);
       const localUser: LocalUser = {
         id: authUser.id,
-        raldId: authUser.raldId,
+        raldId: authUser.raldId ?? authUser.id,
         displayName,
         region,
         isGuest: true,
       };
-      // Merge region into stored user record
+      // Persist region (guestRegister already wrote id/email/displayName to localStorage)
       const stored = JSON.parse(localStorage.getItem("loop_user") ?? "{}") as Record<string, unknown>;
-      localStorage.setItem("loop_user", JSON.stringify({ ...stored, ...localUser }));
+      localStorage.setItem("loop_user", JSON.stringify({ ...stored, region, isGuest: true }));
       setUser(localUser);
       return localUser;
     } finally {
