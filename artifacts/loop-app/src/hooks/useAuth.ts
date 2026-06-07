@@ -13,12 +13,17 @@ export function useAuth() {
   const [user, setUser] = useState<LocalUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Restore from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem("loop_user");
     const token = localStorage.getItem("loop_jwt");
     if (stored && token) {
       try {
-        const parsed = JSON.parse(stored) as AuthUser & { displayName?: string; region?: string; isGuest?: boolean };
+        const parsed = JSON.parse(stored) as AuthUser & {
+          displayName?: string;
+          region?: string;
+          isGuest?: boolean;
+        };
         setUser({
           id: parsed.id,
           raldId: parsed.raldId,
@@ -34,6 +39,13 @@ export function useAuth() {
     setLoading(false);
   }, []);
 
+  // Listen for auth expiry events dispatched by api.ts on 401
+  useEffect(() => {
+    const handler = () => setUser(null);
+    window.addEventListener("loop:auth:expired", handler);
+    return () => window.removeEventListener("loop:auth:expired", handler);
+  }, []);
+
   const register = useCallback(async (displayName: string, region: string) => {
     setLoading(true);
     try {
@@ -45,6 +57,7 @@ export function useAuth() {
         region,
         isGuest: true,
       };
+      // Merge region into stored user record
       const stored = JSON.parse(localStorage.getItem("loop_user") ?? "{}") as Record<string, unknown>;
       localStorage.setItem("loop_user", JSON.stringify({ ...stored, ...localUser }));
       setUser(localUser);
@@ -54,14 +67,17 @@ export function useAuth() {
     }
   }, []);
 
-  const updateProfile = useCallback((updates: Partial<Pick<LocalUser, "displayName" | "region">>) => {
-    setUser((prev) => {
-      if (!prev) return prev;
-      const updated = { ...prev, ...updates };
-      localStorage.setItem("loop_user", JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const updateProfile = useCallback(
+    (updates: Partial<Pick<LocalUser, "displayName" | "region">>) => {
+      setUser((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, ...updates };
+        localStorage.setItem("loop_user", JSON.stringify(updated));
+        return updated;
+      });
+    },
+    []
+  );
 
   const logout = useCallback(() => {
     localStorage.removeItem("loop_jwt");

@@ -12,7 +12,6 @@ export interface LoopRoom {
   participantCount: number;
   maxParticipants: number;
   createdAt: string;
-  metadata?: Record<string, string>;
 }
 
 export interface JoinResult {
@@ -32,6 +31,8 @@ export interface AuthUser {
   region?: string;
 }
 
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+
 function getToken(): string | null {
   return localStorage.getItem("loop_jwt");
 }
@@ -43,7 +44,26 @@ function authHeaders(): HeadersInit {
     : { "Content-Type": "application/json" };
 }
 
-export async function guestRegister(displayName: string): Promise<{ token: string; user: AuthUser }> {
+function handleAuthFailure(): void {
+  localStorage.removeItem("loop_jwt");
+  localStorage.removeItem("loop_user");
+  window.dispatchEvent(new CustomEvent("loop:auth:expired"));
+}
+
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    handleAuthFailure();
+    throw new Error("SESSION_EXPIRED");
+  }
+  return res;
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export async function guestRegister(
+  displayName: string
+): Promise<{ token: string; user: AuthUser }> {
   const email = `guest_${Math.random().toString(36).substring(2, 10)}@loop.guest`;
   const password = Math.random().toString(36).substring(2, 18);
   const res = await fetch(`${AUTH_URL}/auth/register`, {
@@ -52,32 +72,28 @@ export async function guestRegister(displayName: string): Promise<{ token: strin
     body: JSON.stringify({ email, password, displayName }),
   });
   if (!res.ok) throw new Error(`Auth register failed: ${res.status}`);
-  const data = await res.json() as { token: string; user: AuthUser };
+  const data = (await res.json()) as { token: string; user: AuthUser };
   localStorage.setItem("loop_jwt", data.token);
   localStorage.setItem("loop_user", JSON.stringify({ ...data.user, displayName }));
   return data;
 }
 
-export async function getMe(): Promise<AuthUser> {
-  const res = await fetch(`${AUTH_URL}/auth/me`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("Not authenticated");
-  return res.json() as Promise<AuthUser>;
-}
+// ── Rooms ─────────────────────────────────────────────────────────────────────
 
 export async function listRooms(region?: string): Promise<LoopRoom[]> {
   const url = new URL(`${REALTIME_URL}/rooms`);
   url.searchParams.set("product", "loop");
   if (region && region !== "all") url.searchParams.set("region", region);
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await apiFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) throw new Error(`List rooms failed: ${res.status}`);
-  const data = await res.json() as { rooms: LoopRoom[] };
+  const data = (await res.json()) as { rooms: LoopRoom[] };
   return data.rooms ?? [];
 }
 
 export async function getRoom(roomId: string): Promise<LoopRoom | null> {
   const url = new URL(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}`);
   url.searchParams.set("product", "loop");
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await apiFetch(url.toString(), { headers: authHeaders() });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Get room failed: ${res.status}`);
   return res.json() as Promise<LoopRoom>;
@@ -93,7 +109,7 @@ export async function createRoom(opts: {
   host: string;
   maxParticipants?: number;
 }): Promise<{ roomId: string; provider: string }> {
-  const res = await fetch(`${REALTIME_URL}/rooms`, {
+  const res = await apiFetch(`${REALTIME_URL}/rooms`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({
@@ -118,11 +134,14 @@ export async function joinRoom(
   roomId: string,
   role: "host" | "speaker" | "listener" = "listener"
 ): Promise<JoinResult> {
-  const res = await fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/join`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ product: "loop", role }),
-  });
+  const res = await apiFetch(
+    `${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/join`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ product: "loop", role }),
+    }
+  );
   if (!res.ok) throw new Error(`Join room failed: ${res.status}`);
   return res.json() as Promise<JoinResult>;
 }
@@ -132,18 +151,18 @@ export async function leaveRoom(roomId: string): Promise<void> {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ product: "loop" }),
-  });
+  }).catch(() => {/* non-fatal */});
 }
 
 export async function getParticipants(
   roomId: string
 ): Promise<Array<{ userId: string; role: string; audioEnabled: boolean }>> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/participants?product=loop`,
     { headers: authHeaders() }
   );
   if (!res.ok) return [];
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     participants: Array<{ userId: string; role: string; audioEnabled: boolean }>;
   };
   return data.participants ?? [];
