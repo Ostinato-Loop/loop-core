@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { useLiveRoom, type RoomRole } from "../hooks/useLiveRoom";
+import { useLiveRoom, type RoomRole, type ChatMessage } from "../hooks/useLiveRoom";
 import { type LocalUser } from "../hooks/useAuth";
 import MicPermission from "../components/MicPermission";
 
@@ -10,14 +10,13 @@ interface LiveRoomProps {
   role?: RoomRole;
 }
 
-function ParticipantBubble({
-  name, isSpeaking, isMuted, isLocal, role,
-}: {
+// ── Participant bubble ────────────────────────────────────────────────────── //
+
+function ParticipantBubble({ name, isSpeaking, isMuted, isLocal, role }: {
   name: string; isSpeaking: boolean; isMuted: boolean; isLocal: boolean; role: string;
 }) {
-  const initials = name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase();
+  const initials  = name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase();
   const isSpeaker = role === "speaker" || role === "host";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 64 }}>
       <div
@@ -31,20 +30,15 @@ function ParticipantBubble({
           display: "flex", alignItems: "center", justifyContent: "center",
           fontWeight: 700, fontSize: 18,
           color: isLocal ? "var(--loop-green)" : "#fff",
-          position: "relative",
-          transition: "border-color 0.2s",
+          position: "relative", transition: "border-color 0.2s",
         }}
       >
         {initials || "?"}
         {isMuted && isSpeaker && (
-          <span style={{ position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: "50%", background: "#FF4444", border: "2px solid var(--loop-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>
-            🔇
-          </span>
+          <span style={{ position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: "50%", background: "#FF4444", border: "2px solid var(--loop-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🔇</span>
         )}
         {!isMuted && isSpeaker && !isSpeaking && (
-          <span style={{ position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: "50%", background: "rgba(62,222,114,0.8)", border: "2px solid var(--loop-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>
-            🎙️
-          </span>
+          <span style={{ position: "absolute", bottom: -2, right: -2, width: 18, height: 18, borderRadius: "50%", background: "rgba(62,222,114,0.8)", border: "2px solid var(--loop-bg)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>🎙️</span>
         )}
       </div>
       <span style={{ fontSize: "0.65rem", color: isLocal ? "var(--loop-green)" : "rgba(255,255,255,0.65)", fontWeight: 600, textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -54,15 +48,10 @@ function ParticipantBubble({
   );
 }
 
-/** Hold-to-speak PTT button — handles mouse, touch, and stylus */
-function PTTButton({
-  isPTTActive,
-  onStart,
-  onEnd,
-}: {
-  isPTTActive: boolean;
-  onStart: () => void;
-  onEnd: () => void;
+// ── PTT button ────────────────────────────────────────────────────────────── //
+
+function PTTButton({ isPTTActive, onStart, onEnd }: {
+  isPTTActive: boolean; onStart: () => void; onEnd: () => void;
 }) {
   return (
     <button
@@ -72,30 +61,15 @@ function PTTButton({
       onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
       onContextMenu={(e) => e.preventDefault()}
       style={{
-        flex: 1,
-        height: 64,
-        borderRadius: 999,
-        fontWeight: 800,
-        fontSize: "0.95rem",
-        cursor: "pointer",
-        transition: "background 0.1s, transform 0.1s, box-shadow 0.1s",
-        border: isPTTActive ? "none" : "2px solid var(--loop-green)",
-        background: isPTTActive
-          ? "var(--loop-green)"
-          : "rgba(62,222,114,0.06)",
+        flex: 1, height: 64, borderRadius: 999, fontWeight: 800, fontSize: "0.95rem",
+        cursor: "pointer", border: isPTTActive ? "none" : "2px solid var(--loop-green)",
+        background: isPTTActive ? "var(--loop-green)" : "rgba(62,222,114,0.06)",
         color: isPTTActive ? "var(--loop-bg)" : "var(--loop-green)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        letterSpacing: "0.01em",
-        WebkitUserSelect: "none",
-        userSelect: "none",
-        touchAction: "none",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+        WebkitUserSelect: "none", userSelect: "none", touchAction: "none",
+        transition: "background 0.1s, transform 0.1s, box-shadow 0.1s",
         transform: isPTTActive ? "scale(0.97)" : "scale(1)",
-        boxShadow: isPTTActive
-          ? "0 0 0 4px rgba(62,222,114,0.25), 0 0 20px rgba(62,222,114,0.2)"
-          : "none",
+        boxShadow: isPTTActive ? "0 0 0 4px rgba(62,222,114,0.25), 0 0 20px rgba(62,222,114,0.2)" : "none",
       }}
     >
       <span style={{ fontSize: 20 }}>{isPTTActive ? "🎙️" : "🎤"}</span>
@@ -104,64 +78,168 @@ function PTTButton({
   );
 }
 
+// ── Chat bubble ───────────────────────────────────────────────────────────── //
+
+function ChatBubble({ msg }: { msg: ChatMessage }) {
+  const time = new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: msg.isLocal ? "flex-end" : "flex-start", marginBottom: "0.6rem" }}>
+      {!msg.isLocal && (
+        <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.35)", fontWeight: 600, marginBottom: 3, paddingLeft: 4 }}>
+          {msg.from}
+        </span>
+      )}
+      <div style={{
+        maxWidth: "78%",
+        padding: "0.5rem 0.85rem",
+        borderRadius: msg.isLocal ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+        background: msg.isLocal ? "var(--loop-green)" : "rgba(255,255,255,0.08)",
+        color: msg.isLocal ? "var(--loop-bg)" : "#fff",
+        fontSize: "0.875rem",
+        fontWeight: 500,
+        lineHeight: 1.4,
+        wordBreak: "break-word",
+      }}>
+        {msg.text}
+      </div>
+      <span style={{ fontSize: "0.62rem", color: "rgba(255,255,255,0.25)", marginTop: 3, paddingRight: msg.isLocal ? 4 : 0, paddingLeft: msg.isLocal ? 0 : 4 }}>
+        {time}
+      </span>
+    </div>
+  );
+}
+
+// ── Chat panel ────────────────────────────────────────────────────────────── //
+
+function ChatPanel({ messages, onSend, onClose }: {
+  messages: ChatMessage[];
+  onSend: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const listRef           = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
+  const submit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onSend(trimmed);
+    setDraft("");
+  };
+
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
+        width: "100%", maxWidth: 480,
+        height: "65svh",
+        background: "#0B1912",
+        borderTop: "1px solid rgba(62,222,114,0.18)",
+        borderRadius: "20px 20px 0 0",
+        display: "flex", flexDirection: "column",
+        zIndex: 100,
+        boxShadow: "0 -8px 40px rgba(0,0,0,0.6)",
+      }}
+    >
+      {/* Panel header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.875rem 1.25rem", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+        <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Chat</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 4px" }}>×</button>
+      </div>
+
+      {/* Messages */}
+      <div
+        ref={listRef}
+        style={{ flex: 1, overflowY: "auto", padding: "1rem 1.25rem", display: "flex", flexDirection: "column", justifyContent: messages.length === 0 ? "center" : "flex-start" }}
+      >
+        {messages.length === 0 ? (
+          <p style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: "0.85rem" }}>
+            No messages yet.<br />Say something! 👋
+          </p>
+        ) : (
+          messages.map((m) => <ChatBubble key={m.id} msg={m} />)
+        )}
+      </div>
+
+      {/* Input */}
+      <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", gap: 8, flexShrink: 0, paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="Type a message…"
+          maxLength={300}
+          autoFocus
+          style={{
+            flex: 1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 999, padding: "0.65rem 1rem", color: "#fff", fontSize: "0.9rem",
+            outline: "none",
+          }}
+          onFocus={(e) => { e.target.style.borderColor = "rgba(62,222,114,0.4)"; }}
+          onBlur={(e)  => { e.target.style.borderColor = "rgba(255,255,255,0.1)"; }}
+        />
+        <button
+          onClick={submit}
+          disabled={!draft.trim()}
+          style={{
+            width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
+            background: draft.trim() ? "var(--loop-green)" : "rgba(255,255,255,0.06)",
+            border: "none", cursor: draft.trim() ? "pointer" : "default",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18, transition: "background 0.15s",
+          }}
+        >
+          ↑
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Main LiveRoom ─────────────────────────────────────────────────────────── //
+
 export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomProps) {
-  const [, navigate] = useLocation();
+  const [, navigate]    = useLocation();
   const [showMicHelp, setShowMicHelp] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const startTime = useRef(Date.now());
+  const [chatOpen, setChatOpen]       = useState(false);
+  const [elapsed, setElapsed]         = useState(0);
+  const startTime                     = useRef(Date.now());
 
   const {
-    state,
-    connect,
-    disconnect,
-    toggleMute,
-    startPTT,
-    endPTT,
-    togglePttMode,
-    requestToSpeak,
+    state, connect, disconnect,
+    toggleMute, startPTT, endPTT, togglePttMode, requestToSpeak,
+    sendMessage, markChatRead, markChatClosed,
   } = useLiveRoom(roomId, user.displayName, role);
 
   useEffect(() => {
     connect();
-    const timer = setInterval(
-      () => setElapsed(Math.floor((Date.now() - startTime.current) / 1000)),
-      1000
-    );
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startTime.current) / 1000)), 1000);
     return () => { clearInterval(timer); disconnect(); };
   }, []);
 
-  const handleLeave = async () => {
-    await disconnect();
-    navigate("/");
-  };
+  const openChat = useCallback(() => {
+    setChatOpen(true);
+    markChatRead();
+  }, [markChatRead]);
 
-  const handleRequestSpeak = async () => {
-    try {
-      await requestToSpeak();
-    } catch {
-      setShowMicHelp(true);
-    }
-  };
+  const closeChat = useCallback(() => {
+    setChatOpen(false);
+    markChatClosed();
+  }, [markChatClosed]);
 
-  const handleMuteTap = async () => {
-    try {
-      await toggleMute();
-    } catch {
-      setShowMicHelp(true);
-    }
-  };
-
-  const handlePTTStart = async () => {
-    try {
-      await startPTT();
-    } catch {
-      setShowMicHelp(true);
-    }
-  };
-
-  const handlePTTEnd = async () => {
-    await endPTT();
-  };
+  const handleLeave        = async () => { await disconnect(); navigate("/"); };
+  const handleRequestSpeak = async () => { try { await requestToSpeak(); } catch { setShowMicHelp(true); } };
+  const handleMuteTap      = async () => { try { await toggleMute(); }     catch { setShowMicHelp(true); } };
+  const handlePTTStart     = async () => { try { await startPTT(); }       catch { setShowMicHelp(true); } };
+  const handlePTTEnd       = async () => { await endPTT(); };
 
   const formatTime = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
@@ -173,6 +251,15 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
     <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", background: "var(--loop-bg)", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       {showMicHelp && <MicPermission onDismiss={() => setShowMicHelp(false)} />}
 
+      {/* Chat overlay */}
+      {chatOpen && (
+        <>
+          {/* Backdrop */}
+          <div onClick={closeChat} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", zIndex: 99 }} />
+          <ChatPanel messages={state.messages} onSend={sendMessage} onClose={closeChat} />
+        </>
+      )}
+
       {/* Header */}
       <div style={{ padding: "1rem 1.25rem", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--border)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -181,16 +268,39 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
             LIVE · {formatTime(elapsed)}
           </span>
         </div>
-        <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)" }}>
-          🎙️ {state.speakerCount} · 👂 {state.listenerCount}
-        </span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)" }}>
+            🎙️ {state.speakerCount} · 👂 {state.listenerCount}
+          </span>
+
+          {/* Chat toggle */}
+          <button
+            onClick={chatOpen ? closeChat : openChat}
+            style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 4, fontSize: 20, lineHeight: 1 }}
+            title="Room chat"
+          >
+            💬
+            {state.unreadCount > 0 && (
+              <span style={{
+                position: "absolute", top: -2, right: -4,
+                minWidth: 16, height: 16,
+                background: "var(--loop-green)", color: "var(--loop-bg)",
+                borderRadius: 999, fontSize: "0.6rem", fontWeight: 800,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                padding: "0 3px",
+              }}>
+                {state.unreadCount > 9 ? "9+" : state.unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Connection state */}
       {state.connecting && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", gap: 12, color: "rgba(255,255,255,0.5)", fontSize: "0.875rem" }}>
-          <span className="spinner" />
-          Connecting to room…
+          <span className="spinner" /> Connecting to room…
         </div>
       )}
 
@@ -198,9 +308,7 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
         <div style={{ margin: "1rem 1.25rem", background: "rgba(255,68,68,0.06)", border: "1px solid rgba(255,68,68,0.2)", borderRadius: "var(--radius-xl)", padding: "1rem" }}>
           <p style={{ fontWeight: 700, fontSize: "0.875rem", marginBottom: 4 }}>Connection issue</p>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>{state.error}</p>
-          <button onClick={() => connect()} style={{ fontSize: "0.8rem", color: "var(--loop-green)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>
-            Try again →
-          </button>
+          <button onClick={() => connect()} style={{ fontSize: "0.8rem", color: "var(--loop-green)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Try again →</button>
         </div>
       )}
 
@@ -213,14 +321,7 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "1.25rem 1rem" }}>
               {speakers.map((p) => (
-                <ParticipantBubble
-                  key={p.identity}
-                  name={p.displayName}
-                  isSpeaking={p.isSpeaking}
-                  isMuted={p.isMuted}
-                  isLocal={p.isLocal}
-                  role={p.role}
-                />
+                <ParticipantBubble key={p.identity} name={p.displayName} isSpeaking={p.isSpeaking} isMuted={p.isMuted} isLocal={p.isLocal} role={p.role} />
               ))}
             </div>
           </div>
@@ -248,12 +349,8 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
 
         {state.connected && state.participants.length === 0 && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 0", gap: "0.75rem", textAlign: "center" }}>
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(62,222,114,0.08)", border: "1px solid rgba(62,222,114,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
-              🎙️
-            </div>
-            <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.875rem" }}>
-              You're the first one here.<br />Start talking — others will join.
-            </p>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(62,222,114,0.08)", border: "1px solid rgba(62,222,114,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🎙️</div>
+            <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.875rem" }}>You're the first one here.<br />Start talking — others will join.</p>
           </div>
         )}
       </div>
@@ -272,14 +369,9 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
                 👋
               </button>
 
-              {/* ── Speakers: PTT or open-mic ──────────────────────────── */}
               {state.canSpeak ? (
                 state.pttMode ? (
-                  <PTTButton
-                    isPTTActive={state.isPTTActive}
-                    onStart={handlePTTStart}
-                    onEnd={handlePTTEnd}
-                  />
+                  <PTTButton isPTTActive={state.isPTTActive} onStart={handlePTTStart} onEnd={handlePTTEnd} />
                 ) : (
                   <button
                     onClick={handleMuteTap}
@@ -296,41 +388,24 @@ export default function LiveRoom({ roomId, user, role = "listener" }: LiveRoomPr
                   </button>
                 )
               ) : (
-                /* ── Listeners: request to speak ────────────────────────── */
                 <button
                   onClick={handleRequestSpeak}
-                  style={{ flex: 1, height: 64, borderRadius: 999, fontWeight: 700, fontSize: "0.9rem", cursor: "pointer", transition: "all 0.15s", border: "1px solid rgba(62,222,114,0.4)", background: "rgba(62,222,114,0.06)", color: "var(--loop-green)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                  style={{ flex: 1, height: 64, borderRadius: 999, fontWeight: 700, fontSize: "0.9rem", cursor: "pointer", border: "1px solid rgba(62,222,114,0.4)", background: "rgba(62,222,114,0.06)", color: "var(--loop-green)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
                 >
                   🖐️ Request to speak
                 </button>
               )}
 
-              {/* Spacer to balance the leave button */}
               {!state.canSpeak && <div style={{ width: 52 }} />}
             </div>
 
-            {/* Mode toggle — only visible for speakers */}
             {state.canSpeak && (
               <div style={{ display: "flex", justifyContent: "center", marginTop: "0.75rem" }}>
                 <button
                   onClick={togglePttMode}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 999,
-                    padding: "0.3rem 1rem",
-                    fontSize: "0.72rem",
-                    fontWeight: 600,
-                    color: "rgba(255,255,255,0.4)",
-                    cursor: "pointer",
-                    letterSpacing: "0.04em",
-                    transition: "border-color 0.15s, color 0.15s",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                  onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.color = "rgba(255,255,255,0.7)"; (e.target as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.25)"; }}
-                  onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.color = "rgba(255,255,255,0.4)"; (e.target as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.1)"; }}
+                  style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 999, padding: "0.3rem 1rem", fontSize: "0.72rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", cursor: "pointer", letterSpacing: "0.04em", transition: "border-color 0.15s, color 0.15s" }}
+                  onMouseEnter={(e) => { (e.target as HTMLElement).style.color = "rgba(255,255,255,0.7)"; (e.target as HTMLElement).style.borderColor = "rgba(255,255,255,0.25)"; }}
+                  onMouseLeave={(e) => { (e.target as HTMLElement).style.color = "rgba(255,255,255,0.4)"; (e.target as HTMLElement).style.borderColor = "rgba(255,255,255,0.1)"; }}
                 >
                   {state.pttMode ? "Switch to open mic" : "Switch to hold-to-speak"}
                 </button>

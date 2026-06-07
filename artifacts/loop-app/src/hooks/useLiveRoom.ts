@@ -5,7 +5,6 @@ import {
   LocalTrack,
   RemoteParticipant,
   LocalParticipant,
-  Track,
   createLocalAudioTrack,
   ConnectionState,
 } from "livekit-client";
@@ -22,6 +21,22 @@ export interface LiveParticipant {
   role: RoomRole;
 }
 
+export interface ChatMessage {
+  id: string;
+  from: string;
+  text: string;
+  ts: number;
+  isLocal: boolean;
+}
+
+interface ChatPayload {
+  type: "chat";
+  id: string;
+  from: string;
+  text: string;
+  ts: number;
+}
+
 export interface LiveRoomState {
   connected: boolean;
   connecting: boolean;
@@ -32,44 +47,51 @@ export interface LiveRoomState {
   canSpeak: boolean;
   speakerCount: number;
   listenerCount: number;
-  /** true = hold-to-speak mode; false = open-mic mode */
   pttMode: boolean;
-  /** true while the PTT button is actively held down */
   isPTTActive: boolean;
+  messages: ChatMessage[];
+  unreadCount: number;
 }
 
+const CHAT_TOPIC = "loop-chat";
+
 export function useLiveRoom(roomId: string | null, displayName: string, role: RoomRole = "listener") {
-  const roomRef = useRef<Room | null>(null);
+  const roomRef       = useRef<Room | null>(null);
   const localAudioRef = useRef<LocalTrack | null>(null);
-  const pttActiveRef = useRef(false); // sync guard so endPTT is idempotent
+  const pttActiveRef  = useRef(false);
+  const chatOpenRef   = useRef(false); // set by LiveRoom when panel is open
 
   const [state, setState] = useState<LiveRoomState>({
     connected: false,
     connecting: false,
     error: null,
     participants: [],
-    isMuted: role !== "listener", // speakers start muted (PTT mode default)
+    isMuted: role !== "listener",
     myRole: role,
     canSpeak: role !== "listener",
     speakerCount: 0,
     listenerCount: 0,
-    pttMode: role !== "listener", // speakers default to PTT
+    pttMode: role !== "listener",
     isPTTActive: false,
+    messages: [],
+    unreadCount: 0,
   });
 
+  // ── Participants ──────────────────────────────────────────────────────── //
+
   const updateParticipants = useCallback((room: Room) => {
-    const local = room.localParticipant;
+    const local   = room.localParticipant;
     const remotes = Array.from(room.remoteParticipants.values());
 
     const toParticipant = (
       p: LocalParticipant | RemoteParticipant,
       isLocal: boolean
     ): LiveParticipant => {
-      const name = p.name ?? p.identity;
+      const name       = p.name ?? p.identity;
       const audioTrack = isLocal
         ? Array.from((p as LocalParticipant).audioTrackPublications.values())[0]
         : Array.from((p as RemoteParticipant).audioTrackPublications.values())[0];
-      const isMuted = audioTrack?.isMuted ?? true;
+      const isMuted    = audioTrack?.isMuted ?? true;
       const canPublish = isLocal
         ? (p as LocalParticipant).permissions?.canPublish ?? false
         : true;
@@ -88,11 +110,13 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
       ...remotes.map((r) => toParticipant(r, false)),
     ];
 
-    const speakerCount = all.filter((p) => !p.isMuted && p.role !== "listener").length;
+    const speakerCount  = all.filter((p) => !p.isMuted && p.role !== "listener").length;
     const listenerCount = all.filter((p) => p.role === "listener").length;
 
     setState((prev) => ({ ...prev, participants: all, speakerCount, listenerCount }));
   }, []);
+
+  // ── Connect ───────────────────────────────────────────────────────────── //
 
   const connect = useCallback(async () => {
     if (!roomId) return;
@@ -103,59 +127,72 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
-        audioCaptureDefaults: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
 
       roomRef.current = room;
 
-      room.on(RoomEvent.ParticipantConnected, () => updateParticipants(room));
+      // Participant events
+      room.on(RoomEvent.ParticipantConnected,    () => updateParticipants(room));
       room.on(RoomEvent.ParticipantDisconnected, () => updateParticipants(room));
-      room.on(RoomEvent.TrackPublished, () => updateParticipants(room));
-      room.on(RoomEvent.TrackUnpublished, () => updateParticipants(room));
-      room.on(RoomEvent.TrackMuted, () => updateParticipants(room));
-      room.on(RoomEvent.TrackUnmuted, () => updateParticipants(room));
-      room.on(RoomEvent.ActiveSpeakersChanged, () => updateParticipants(room));
+      room.on(RoomEvent.TrackPublished,          () => updateParticipants(room));
+      room.on(RoomEvent.TrackUnpublished,        () => updateParticipants(room));
+      room.on(RoomEvent.TrackMuted,              () => updateParticipants(room));
+      room.on(RoomEvent.TrackUnmuted,            () => updateParticipants(room));
+      room.on(RoomEvent.ActiveSpeakersChanged,   () => updateParticipants(room));
+
+      // Connection events
       room.on(RoomEvent.ConnectionStateChanged, (cs) => {
-        if (cs === ConnectionState.Disconnected) {
+        if (cs === ConnectionState.Disconnected)
           setState((prev) => ({ ...prev, connected: false, connecting: false }));
-        }
       });
       room.on(RoomEvent.Disconnected, () => {
         setState((prev) => ({
-          ...prev,
-          connected: false,
-          connecting: false,
-          participants: [],
-          isPTTActive: false,
+          ...prev, connected: false, connecting: false, participants: [], isPTTActive: false,
         }));
+      });
+
+      // Chat — DataReceived
+      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
+        try {
+          const raw = new TextDecoder().decode(payload);
+          const msg = JSON.parse(raw) as ChatPayload;
+          if (msg.type !== "chat") return;
+
+          const incoming: ChatMessage = {
+            id:      msg.id,
+            from:    msg.from,
+            text:    msg.text,
+            ts:      msg.ts,
+            isLocal: false,
+          };
+
+          setState((prev) => ({
+            ...prev,
+            messages:    [...prev.messages, incoming],
+            unreadCount: chatOpenRef.current ? 0 : prev.unreadCount + 1,
+          }));
+        } catch { /* malformed payload — ignore */ }
       });
 
       await room.connect(joinResult.serverUrl, joinResult.token, { autoSubscribe: true });
 
       if (role === "host" || role === "speaker") {
-        const audioTrack = await createLocalAudioTrack({
-          echoCancellation: true,
-          noiseSuppression: true,
-        });
+        const audioTrack = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
         localAudioRef.current = audioTrack;
         await room.localParticipant.publishTrack(audioTrack);
-        // Start muted — PTT mode is the default
-        await audioTrack.mute();
+        await audioTrack.mute(); // PTT default
       }
 
       updateParticipants(room);
       setState((prev) => ({
         ...prev,
-        connected: true,
-        connecting: false,
-        myRole: role,
-        canSpeak: role !== "listener",
-        isMuted: role !== "listener", // muted on entry (PTT)
-        pttMode: role !== "listener",
+        connected:   true,
+        connecting:  false,
+        myRole:      role,
+        canSpeak:    role !== "listener",
+        isMuted:     role !== "listener",
+        pttMode:     role !== "listener",
         isPTTActive: false,
       }));
     } catch (err) {
@@ -164,52 +201,63 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
     }
   }, [roomId, role, displayName, updateParticipants]);
 
+  // ── Disconnect ────────────────────────────────────────────────────────── //
+
   const disconnect = useCallback(async () => {
-    if (roomRef.current) {
-      await roomRef.current.disconnect();
-      roomRef.current = null;
-    }
-    if (localAudioRef.current) {
-      localAudioRef.current.stop();
-      localAudioRef.current = null;
-    }
-    if (roomId) {
-      try { await leaveRoom(roomId); } catch { /* non-fatal */ }
-    }
+    if (roomRef.current) { await roomRef.current.disconnect(); roomRef.current = null; }
+    if (localAudioRef.current) { localAudioRef.current.stop(); localAudioRef.current = null; }
+    if (roomId) { try { await leaveRoom(roomId); } catch { /* non-fatal */ } }
     pttActiveRef.current = false;
-    setState((prev) => ({
-      ...prev,
-      connected: false,
-      connecting: false,
-      participants: [],
-      isPTTActive: false,
-    }));
+    setState((prev) => ({ ...prev, connected: false, connecting: false, participants: [], isPTTActive: false }));
   }, [roomId]);
 
-  // ── Push-to-talk ────────────────────────────────────────────────────────── //
+  // ── Chat ──────────────────────────────────────────────────────────────── //
 
-  /** Call on pointerdown — unmutes mic while held */
+  const sendMessage = useCallback(async (text: string) => {
+    const room = roomRef.current;
+    if (!room || !text.trim()) return;
+
+    const payload: ChatPayload = {
+      type: "chat",
+      id:   `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      from: displayName,
+      text: text.trim(),
+      ts:   Date.now(),
+    };
+
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    await room.localParticipant.publishData(bytes, { reliable: true, topic: CHAT_TOPIC });
+
+    const local: ChatMessage = { ...payload, isLocal: true };
+    setState((prev) => ({ ...prev, messages: [...prev.messages, local] }));
+  }, [displayName]);
+
+  /** Call when the chat panel opens so new messages don't increment the badge */
+  const markChatRead = useCallback(() => {
+    chatOpenRef.current = true;
+    setState((prev) => ({ ...prev, unreadCount: 0 }));
+  }, []);
+
+  /** Call when the chat panel closes */
+  const markChatClosed = useCallback(() => {
+    chatOpenRef.current = false;
+  }, []);
+
+  // ── PTT ───────────────────────────────────────────────────────────────── //
+
   const startPTT = useCallback(async () => {
     if (pttActiveRef.current) return;
     pttActiveRef.current = true;
     setState((prev) => ({ ...prev, isPTTActive: true }));
-
     const room = roomRef.current;
     if (!room) return;
-
     const local = room.localParticipant;
-    const pub = Array.from(local.audioTrackPublications.values())[0];
-
+    const pub   = Array.from(local.audioTrackPublications.values())[0];
     if (!pub) {
-      // No track yet — request mic and publish
       try {
-        const track = await createLocalAudioTrack({
-          echoCancellation: true,
-          noiseSuppression: true,
-        });
+        const track = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
         localAudioRef.current = track;
         await local.publishTrack(track);
-        // unmuted by default on publish
         setState((prev) => ({ ...prev, canSpeak: true, isMuted: false }));
         updateParticipants(room);
       } catch {
@@ -218,48 +266,30 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
       }
       return;
     }
-
-    if (pub.isMuted) {
-      await pub.unmute();
-      setState((prev) => ({ ...prev, isMuted: false }));
-      updateParticipants(room);
-    }
+    if (pub.isMuted) { await pub.unmute(); setState((prev) => ({ ...prev, isMuted: false })); updateParticipants(room); }
   }, [updateParticipants]);
 
-  /** Call on pointerup / pointerleave — re-mutes if still in PTT mode */
   const endPTT = useCallback(async () => {
     if (!pttActiveRef.current) return;
     pttActiveRef.current = false;
     setState((prev) => ({ ...prev, isPTTActive: false }));
-
     const room = roomRef.current;
     if (!room) return;
-
-    const local = room.localParticipant;
-    const pub = Array.from(local.audioTrackPublications.values())[0];
-
-    if (pub && !pub.isMuted) {
-      await pub.mute();
-      setState((prev) => ({ ...prev, isMuted: true }));
-      updateParticipants(room);
-    }
+    const pub = Array.from(room.localParticipant.audioTrackPublications.values())[0];
+    if (pub && !pub.isMuted) { await pub.mute(); setState((prev) => ({ ...prev, isMuted: true })); updateParticipants(room); }
   }, [updateParticipants]);
 
-  // ── Open-mic toggle (classic mute/unmute) ─────────────────────────────── //
+  // ── Open-mic toggle ───────────────────────────────────────────────────── //
 
   const toggleMute = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
     const local = room.localParticipant;
-    const pub = Array.from(local.audioTrackPublications.values())[0];
-
+    const pub   = Array.from(local.audioTrackPublications.values())[0];
     if (!pub) {
       if (role !== "listener") {
         try {
-          const track = await createLocalAudioTrack({
-            echoCancellation: true,
-            noiseSuppression: true,
-          });
+          const track = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
           localAudioRef.current = track;
           await local.publishTrack(track);
           setState((prev) => ({ ...prev, isMuted: false, canSpeak: true }));
@@ -267,86 +297,55 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
       }
       return;
     }
-
-    if (pub.isMuted) {
-      await pub.unmute();
-      setState((prev) => ({ ...prev, isMuted: false }));
-    } else {
-      await pub.mute();
-      setState((prev) => ({ ...prev, isMuted: true }));
-    }
+    if (pub.isMuted) { await pub.unmute(); setState((prev) => ({ ...prev, isMuted: false })); }
+    else             { await pub.mute();   setState((prev) => ({ ...prev, isMuted: true  })); }
     updateParticipants(room);
   }, [role, updateParticipants]);
 
-  /** Toggle between PTT mode and open-mic mode */
   const togglePttMode = useCallback(async () => {
     setState((prev) => {
       const nextPtt = !prev.pttMode;
-
-      // Switching to open-mic: if currently muted, unmute
-      if (!nextPtt) {
-        const room = roomRef.current;
-        if (room) {
-          const pub = Array.from(room.localParticipant.audioTrackPublications.values())[0];
-          if (pub?.isMuted) {
-            pub.unmute().then(() => {
-              setState((s) => ({ ...s, isMuted: false }));
-              updateParticipants(room);
-            });
-          }
+      const room    = roomRef.current;
+      if (room) {
+        const pub = Array.from(room.localParticipant.audioTrackPublications.values())[0];
+        if (!nextPtt && pub?.isMuted) {
+          pub.unmute().then(() => { setState((s) => ({ ...s, isMuted: false })); updateParticipants(room); });
+        }
+        if (nextPtt && pub && !pub.isMuted) {
+          pub.mute().then(() => { setState((s) => ({ ...s, isMuted: true })); updateParticipants(room); });
         }
       }
-
-      // Switching to PTT: mute if currently live
-      if (nextPtt) {
-        const room = roomRef.current;
-        if (room) {
-          const pub = Array.from(room.localParticipant.audioTrackPublications.values())[0];
-          if (pub && !pub.isMuted) {
-            pub.mute().then(() => {
-              setState((s) => ({ ...s, isMuted: true }));
-              updateParticipants(room);
-            });
-          }
-        }
-      }
-
       return { ...prev, pttMode: nextPtt, isPTTActive: false };
     });
   }, [updateParticipants]);
 
-  /** Listener asking to come on stage */
   const requestToSpeak = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
     try {
-      const track = await createLocalAudioTrack({
-        echoCancellation: true,
-        noiseSuppression: true,
-      });
+      const track = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
       localAudioRef.current = track;
       await room.localParticipant.publishTrack(track);
-      setState((prev) => ({
-        ...prev,
-        canSpeak: true,
-        myRole: "speaker",
-        isMuted: false,
-        pttMode: true, // new speakers start in PTT
-        isPTTActive: false,
-      }));
+      setState((prev) => ({ ...prev, canSpeak: true, myRole: "speaker", isMuted: false, pttMode: true, isPTTActive: false }));
       updateParticipants(room);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Mic access denied";
-      setState((prev) => ({ ...prev, error: msg }));
+      setState((prev) => ({ ...prev, error: err instanceof Error ? err.message : "Mic access denied" }));
     }
   }, [updateParticipants]);
 
+  // ── Cleanup ───────────────────────────────────────────────────────────── //
+
   useEffect(() => {
     return () => {
-      if (roomRef.current) roomRef.current.disconnect();
+      if (roomRef.current)    roomRef.current.disconnect();
       if (localAudioRef.current) localAudioRef.current.stop();
     };
   }, []);
 
-  return { state, connect, disconnect, toggleMute, startPTT, endPTT, togglePttMode, requestToSpeak };
+  return {
+    state,
+    connect, disconnect,
+    toggleMute, startPTT, endPTT, togglePttMode, requestToSpeak,
+    sendMessage, markChatRead, markChatClosed,
+  };
 }
