@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { getParticipants, listRooms, type LoopRoom } from "../lib/api";
+import { getRoom, getParticipants, type LoopRoom } from "../lib/api";
 import { type LocalUser } from "../hooks/useAuth";
-import { NIGERIAN_REGIONS, ROOM_CATEGORIES } from "../lib/constants";
+import { NIGERIAN_REGIONS } from "../lib/constants";
 
 interface RoomPageProps {
   roomId: string;
@@ -12,33 +12,37 @@ interface RoomPageProps {
 export default function RoomPage({ roomId, user }: RoomPageProps) {
   const [, navigate] = useLocation();
   const [room, setRoom] = useState<LoopRoom | null>(null);
-  const [participants, setParticipants] = useState<Array<{ userId: string; role: string; audioEnabled: boolean }>>([]);
+  const [participants, setParticipants] = useState<
+    Array<{ userId: string; role: string; audioEnabled: boolean }>
+  >([]);
   const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState(false);
   const [role, setRole] = useState<"listener" | "speaker">("listener");
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const rooms = await listRooms();
-        const found = rooms.find((r) => r.roomId === roomId);
-        setRoom(found ?? null);
+        const found = await getRoom(roomId);
+        setRoom(found);
         if (found) {
           const pts = await getParticipants(roomId);
           setParticipants(pts);
         }
-      } catch { /* non-fatal */ }
-      finally { setLoading(false); }
+      } catch { /* non-fatal */ } finally {
+        setLoading(false);
+      }
     })();
   }, [roomId]);
 
-  const handleJoin = async () => {
+  const handleJoin = () => {
     setJoining(true);
     navigate(`/room/${encodeURIComponent(roomId)}/live?role=${role}`);
   };
 
-  const regionLabel = room ? (NIGERIAN_REGIONS.find((r) => r.id === room.region)?.label ?? room.region) : "";
-  const regionShort = room ? (NIGERIAN_REGIONS.find((r) => r.id === room.region)?.short ?? "🌍") : "";
+  const regionLabel =
+    room ? (NIGERIAN_REGIONS.find((r) => r.id === room.region)?.label ?? room.region) : "";
+  const regionShort =
+    room ? (NIGERIAN_REGIONS.find((r) => r.id === room.region)?.short ?? "🌍") : "";
 
   if (loading) {
     return (
@@ -53,8 +57,12 @@ export default function RoomPage({ roomId, user }: RoomPageProps) {
       <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "1.5rem", background: "var(--loop-bg)", gap: "1rem", textAlign: "center" }}>
         <span style={{ fontSize: 40 }}>👋</span>
         <h2 style={{ fontWeight: 700 }}>Room has ended</h2>
-        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.875rem" }}>This conversation has wrapped up.</p>
-        <Link href="/"><button className="btn-primary" style={{ maxWidth: 200 }}>Browse rooms</button></Link>
+        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.875rem" }}>
+          This conversation has wrapped up.
+        </p>
+        <Link href="/">
+          <button className="btn-primary" style={{ maxWidth: 200 }}>Browse rooms</button>
+        </Link>
       </div>
     );
   }
@@ -77,7 +85,9 @@ export default function RoomPage({ roomId, user }: RoomPageProps) {
             <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--loop-green)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Live</span>
           </div>
         </div>
-        <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)" }}>{room.participantCount} in room</span>
+        <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)" }}>
+          {room.participantCount} in room
+        </span>
       </div>
 
       {/* Room info */}
@@ -91,9 +101,13 @@ export default function RoomPage({ roomId, user }: RoomPageProps) {
           </span>
         </div>
 
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 900, lineHeight: 1.2, marginBottom: "0.75rem" }}>{room.name}</h1>
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 900, lineHeight: 1.2, marginBottom: "0.75rem" }}>
+          {room.name}
+        </h1>
         {room.description && (
-          <p style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.9rem", lineHeight: 1.65, marginBottom: "1.5rem" }}>{room.description}</p>
+          <p style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.9rem", lineHeight: 1.65, marginBottom: "1.5rem" }}>
+            {room.description}
+          </p>
         )}
 
         {/* Host */}
@@ -103,11 +117,13 @@ export default function RoomPage({ roomId, user }: RoomPageProps) {
           </div>
           <div>
             <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>{room.host}</p>
-            <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem" }}>Host · Started {new Date(room.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+            <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem" }}>
+              Host · Started {new Date(room.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </p>
           </div>
         </div>
 
-        {/* Speakers */}
+        {/* Speakers preview */}
         {speakers.length > 0 && (
           <div style={{ marginBottom: "1.5rem" }}>
             <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "rgba(255,255,255,0.35)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "0.75rem" }}>
@@ -135,26 +151,34 @@ export default function RoomPage({ roomId, user }: RoomPageProps) {
 
       {/* Join panel */}
       <div style={{ padding: "1.25rem", borderTop: "1px solid var(--border)", background: "rgba(6,13,10,0.95)", backdropFilter: "blur(12px)" }}>
-        {/* Role selector */}
         <div style={{ display: "flex", gap: 8, marginBottom: "1rem" }}>
-          <button
-            onClick={() => setRole("listener")}
-            style={{ flex: 1, padding: "0.625rem", borderRadius: "var(--radius-lg)", fontSize: "0.8rem", fontWeight: 600, cursor: "pointer", border: `1px solid ${role === "listener" ? "var(--loop-green)" : "var(--border)"}`, background: role === "listener" ? "rgba(62,222,114,0.1)" : "var(--loop-card)", color: role === "listener" ? "var(--loop-green)" : "rgba(255,255,255,0.5)", transition: "all 0.15s" }}
-          >
-            👂 Join as listener
-          </button>
-          <button
-            onClick={() => setRole("speaker")}
-            style={{ flex: 1, padding: "0.625rem", borderRadius: "var(--radius-lg)", fontSize: "0.8rem", fontWeight: 600, cursor: "pointer", border: `1px solid ${role === "speaker" ? "var(--loop-green)" : "var(--border)"}`, background: role === "speaker" ? "rgba(62,222,114,0.1)" : "var(--loop-card)", color: role === "speaker" ? "var(--loop-green)" : "rgba(255,255,255,0.5)", transition: "all 0.15s" }}
-          >
-            🎙️ Join as speaker
-          </button>
+          {(["listener", "speaker"] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRole(r)}
+              style={{
+                flex: 1, padding: "0.625rem", borderRadius: "var(--radius-lg)",
+                fontSize: "0.8rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+                border: `1px solid ${role === r ? "var(--loop-green)" : "var(--border)"}`,
+                background: role === r ? "rgba(62,222,114,0.1)" : "var(--loop-card)",
+                color: role === r ? "var(--loop-green)" : "rgba(255,255,255,0.5)",
+              }}
+            >
+              {r === "listener" ? "👂 Join as listener" : "🎙️ Join as speaker"}
+            </button>
+          ))}
         </div>
         <p style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: "0.875rem" }}>
-          {role === "speaker" ? "You'll need microphone access to speak" : "Listen without a microphone — switch to speaker anytime"}
+          {role === "speaker"
+            ? "You'll need microphone access to speak"
+            : "Listen without a microphone — switch to speaker anytime"}
         </p>
         <button className="btn-primary" onClick={handleJoin} disabled={joining}>
-          {joining ? <><span className="spinner" style={{ width: 16, height: 16, verticalAlign: "middle", marginRight: 8 }} />Joining...</> : "Enter room →"}
+          {joining ? (
+            <><span className="spinner" style={{ width: 16, height: 16, verticalAlign: "middle", marginRight: 8 }} />Joining...</>
+          ) : (
+            "Enter room →"
+          )}
         </button>
       </div>
     </div>

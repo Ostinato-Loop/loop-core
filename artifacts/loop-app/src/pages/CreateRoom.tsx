@@ -32,7 +32,15 @@ export default function CreateRoom({ user }: CreateRoomProps) {
     setError("");
     try {
       const roomId = `loop-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-      await createRoom({ roomId, name: name.trim(), description: description.trim(), category, region, language });
+      await createRoom({
+        roomId,
+        name: name.trim(),
+        description: description.trim(),
+        category,
+        region,
+        language,
+        host: user.displayName,
+      });
       navigate(`/room/${encodeURIComponent(roomId)}/live?role=host`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't create room — check your connection");
@@ -160,7 +168,9 @@ export default function CreateRoom({ user }: CreateRoomProps) {
       {/* Start button */}
       <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, padding: "1.25rem", background: "rgba(6,13,10,0.95)", backdropFilter: "blur(12px)", borderTop: "1px solid var(--border)" }}>
         <button className="btn-primary" onClick={handleCreate} disabled={creating || name.trim().length < 3}>
-          {creating ? <><span className="spinner" style={{ width: 16, height: 16, verticalAlign: "middle", marginRight: 8 }} />Creating room...</> : "🎙️ Go live now"}
+          {creating
+            ? <><span className="spinner" style={{ width: 16, height: 16, verticalAlign: "middle", marginRight: 8 }} />Creating room...</>
+            : "🎙️ Go live now"}
         </button>
       </div>
     </div>

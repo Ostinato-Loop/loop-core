@@ -38,7 +38,9 @@ function getToken(): string | null {
 
 function authHeaders(): HeadersInit {
   const token = getToken();
-  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  return token
+    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+    : { "Content-Type": "application/json" };
 }
 
 export async function guestRegister(displayName: string): Promise<{ token: string; user: AuthUser }> {
@@ -64,11 +66,21 @@ export async function getMe(): Promise<AuthUser> {
 
 export async function listRooms(region?: string): Promise<LoopRoom[]> {
   const url = new URL(`${REALTIME_URL}/rooms`);
+  url.searchParams.set("product", "loop");
   if (region && region !== "all") url.searchParams.set("region", region);
   const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) throw new Error(`List rooms failed: ${res.status}`);
   const data = await res.json() as { rooms: LoopRoom[] };
   return data.rooms ?? [];
+}
+
+export async function getRoom(roomId: string): Promise<LoopRoom | null> {
+  const url = new URL(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}`);
+  url.searchParams.set("product", "loop");
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Get room failed: ${res.status}`);
+  return res.json() as Promise<LoopRoom>;
 }
 
 export async function createRoom(opts: {
@@ -78,6 +90,7 @@ export async function createRoom(opts: {
   category: string;
   region: string;
   language: string;
+  host: string;
   maxParticipants?: number;
 }): Promise<{ roomId: string; provider: string }> {
   const res = await fetch(`${REALTIME_URL}/rooms`, {
@@ -93,6 +106,7 @@ export async function createRoom(opts: {
         category: opts.category,
         region: opts.region,
         language: opts.language,
+        host: opts.host,
       },
     }),
   });
@@ -100,7 +114,10 @@ export async function createRoom(opts: {
   return res.json() as Promise<{ roomId: string; provider: string }>;
 }
 
-export async function joinRoom(roomId: string, role: "host" | "speaker" | "listener" = "listener"): Promise<JoinResult> {
+export async function joinRoom(
+  roomId: string,
+  role: "host" | "speaker" | "listener" = "listener"
+): Promise<JoinResult> {
   const res = await fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/join`, {
     method: "POST",
     headers: authHeaders(),
@@ -118,11 +135,16 @@ export async function leaveRoom(roomId: string): Promise<void> {
   });
 }
 
-export async function getParticipants(roomId: string): Promise<Array<{ userId: string; role: string; audioEnabled: boolean }>> {
-  const res = await fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/participants`, {
-    headers: authHeaders(),
-  });
+export async function getParticipants(
+  roomId: string
+): Promise<Array<{ userId: string; role: string; audioEnabled: boolean }>> {
+  const res = await fetch(
+    `${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/participants?product=loop`,
+    { headers: authHeaders() }
+  );
   if (!res.ok) return [];
-  const data = await res.json() as { participants: Array<{ userId: string; role: string; audioEnabled: boolean }> };
+  const data = await res.json() as {
+    participants: Array<{ userId: string; role: string; audioEnabled: boolean }>;
+  };
   return data.participants ?? [];
 }
