@@ -1,0 +1,14 @@
+{
+  "name": "loop-core",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @workspace/loop-app run dev",
+    "build": "pnpm --filter @workspace/loop-app run build",
+    "typecheck": "pnpm --filter @workspace/loop-app run typecheck"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=8"
+  }
+}
