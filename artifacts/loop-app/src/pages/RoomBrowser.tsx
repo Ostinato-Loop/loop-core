@@ -137,7 +137,7 @@ export default function RoomBrowser({ user }: RoomBrowserProps) {
         </div>
       </div>
 
-      {/* Verification banner — shown below sticky header, scrolls with content */}
+      {/* Verification banner — scrolls with content, not sticky */}
       <VerificationBanner user={user} />
 
       {/* Content */}
