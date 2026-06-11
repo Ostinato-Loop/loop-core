@@ -56,10 +56,13 @@ export interface LiveRoomState {
 const CHAT_TOPIC = "loop-chat";
 
 export function useLiveRoom(roomId: string | null, displayName: string, role: RoomRole = "listener") {
-  const roomRef       = useRef<Room | null>(null);
-  const localAudioRef = useRef<LocalTrack | null>(null);
-  const pttActiveRef  = useRef(false);
-  const chatOpenRef   = useRef(false); // set by LiveRoom when panel is open
+  const roomRef              = useRef<Room | null>(null);
+  const localAudioRef        = useRef<LocalTrack | null>(null);
+  const pttActiveRef         = useRef(false);
+  const chatOpenRef          = useRef(false); // set by LiveRoom when panel is open
+  const intentionalDisconRef = useRef(false); // true when user explicitly leaves
+  const reconnectTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const [state, setState] = useState<LiveRoomState>({
     connected: false,
@@ -120,6 +123,8 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
 
   const connect = useCallback(async () => {
     if (!roomId) return;
+    intentionalDisconRef.current = false;
+    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     setState((prev) => ({ ...prev, connecting: true, error: null }));
 
     try {
@@ -147,9 +152,20 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
           setState((prev) => ({ ...prev, connected: false, connecting: false }));
       });
       room.on(RoomEvent.Disconnected, () => {
+        roomRef.current = null;
         setState((prev) => ({
           ...prev, connected: false, connecting: false, participants: [], isPTTActive: false,
         }));
+
+        // Phase 4: Auto-reconnect on unexpected network drop (not user-initiated)
+        if (!intentionalDisconRef.current && reconnectAttemptsRef.current < 5) {
+          const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30_000);
+          reconnectAttemptsRef.current += 1;
+          setState((prev) => ({ ...prev, error: `Connection lost. Reconnecting in ${Math.round(delay / 1000)}s… (${reconnectAttemptsRef.current}/5)` }));
+          reconnectTimerRef.current = setTimeout(() => {
+            reconnectAttemptsRef.current > 0 && connect();
+          }, delay);
+        }
       });
 
       // Chat — DataReceived
@@ -185,10 +201,12 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
       }
 
       updateParticipants(room);
+      reconnectAttemptsRef.current = 0; // reset on successful connect
       setState((prev) => ({
         ...prev,
         connected:   true,
         connecting:  false,
+        error:       null,
         myRole:      role,
         canSpeak:    role !== "listener",
         isMuted:     role !== "listener",
@@ -198,12 +216,21 @@ export function useLiveRoom(roomId: string | null, displayName: string, role: Ro
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to connect";
       setState((prev) => ({ ...prev, connecting: false, error: msg }));
+      // Auto-retry on initial connection failure too
+      if (!intentionalDisconRef.current && reconnectAttemptsRef.current < 5) {
+        const delay = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30_000);
+        reconnectAttemptsRef.current += 1;
+        reconnectTimerRef.current = setTimeout(() => connect(), delay);
+      }
     }
   }, [roomId, role, displayName, updateParticipants]);
 
   // ── Disconnect ────────────────────────────────────────────────────────── //
 
   const disconnect = useCallback(async () => {
+    intentionalDisconRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     if (roomRef.current) { await roomRef.current.disconnect(); roomRef.current = null; }
     if (localAudioRef.current) { localAudioRef.current.stop(); localAudioRef.current = null; }
     if (roomId) { try { await leaveRoom(roomId); } catch { /* non-fatal */ } }
