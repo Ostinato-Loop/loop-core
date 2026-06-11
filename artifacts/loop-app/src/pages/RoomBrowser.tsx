@@ -4,6 +4,7 @@ import { useRooms } from "../hooks/useRooms";
 import { type LocalUser } from "../hooks/useAuth";
 import { NIGERIAN_REGIONS } from "../lib/constants";
 import { type LoopRoom } from "../lib/api";
+import VerificationBanner from "../components/VerificationBanner";
 
 function LiveBadge() {
   return (
@@ -135,6 +136,9 @@ export default function RoomBrowser({ user }: RoomBrowserProps) {
           ))}
         </div>
       </div>
+
+      {/* Verification banner — shown below sticky header, scrolls with content */}
+      <VerificationBanner user={user} />
 
       {/* Content */}
       <div style={{ flex: 1, padding: "0.75rem 1.25rem 6rem" }}>
