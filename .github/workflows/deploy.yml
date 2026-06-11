@@ -35,8 +35,14 @@ jobs:
         env:
           BASE_URL: /
 
-      - name: Install Wrangler (global, avoids pnpm workspace root conflict)
+      - name: Install Wrangler
         run: npm install -g wrangler@latest
+
+      - name: Create Pages project (idempotent)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler pages project create loop-app --production-branch=main 2>&1 | grep -v "already exists" || true
 
       - name: Deploy to Cloudflare Pages
         env:
