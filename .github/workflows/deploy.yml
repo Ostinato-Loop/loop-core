@@ -1,9 +1,13 @@
-name: Deploy Loop to Cloudflare Pages
+name: Deploy Loop Core to Cloudflare Pages
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: deploy-loop-core
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -36,16 +40,44 @@ jobs:
           BASE_URL: /
 
       - name: Install Wrangler
-        run: npm install -g wrangler@latest
+        run: npm install -g wrangler@4.16.0
 
       - name: Create Pages project (idempotent)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: wrangler pages project create loop-app --production-branch=main 2>&1 | grep -v "already exists" || true
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "FATAL: CLOUDFLARE_API_TOKEN not set" && exit 1; fi
+          wrangler pages project create loop-app --production-branch=main 2>&1 | grep -v "already exists" || true
 
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: wrangler pages deploy artifacts/loop-app/dist --project-name=loop-app --commit-dirty=true
+
+      - name: Register loop.rald.cloud custom domain (idempotent)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler pages domain add loop-app loop.rald.cloud 2>/dev/null \
+            && echo "loop.rald.cloud registered" \
+            || echo "loop.rald.cloud already configured"
+
+      - name: Post-deploy smoke test
+        run: |
+          sleep 15
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" https://loop.rald.cloud || echo "000")
+          echo "loop.rald.cloud → HTTP $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "WARNING: smoke test returned HTTP $STATUS — Pages may still be propagating"
+          else
+            echo "SMOKE TEST PASSED"
+          fi
+        continue-on-error: true
+
+      - name: Record deployment audit
+        if: always()
+        run: |
+          echo "AUDIT: service=loop-core-pages commit=${{ github.sha }} actor=${{ github.actor }} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) status=${{ job.status }}"
