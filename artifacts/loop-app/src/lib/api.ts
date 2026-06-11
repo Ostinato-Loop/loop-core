@@ -23,20 +23,16 @@ export interface JoinResult {
   providerRoomId: string;
 }
 
-// Shape returned by auth.rald.cloud /auth/register and /auth/login
-interface AuthServerUser {
-  id: string;
-  email: string;
-  name: string | null;
-  role: string;
-  createdAt: string;
-}
-
 export interface AuthUser {
   id: string;
-  email: string;
+  username: string;
+  displayName: string;
+  name: string;
   raldId: string;
-  displayName?: string;
+  reservedEmailAddress: string;
+  trustLevel: string;
+  needsVerification: boolean;
+  verificationUrl: string;
   region?: string;
 }
 
@@ -68,36 +64,84 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
   return res;
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Identity check for live availability ──────────────────────────────────────
 
-export async function guestRegister(
-  displayName: string
+export interface UsernameCheckResult {
+  available: boolean;
+  username:  string;
+  reason?:   string;
+  reservations?: {
+    mail:      string;
+    domain:    string;
+    workspace: string;
+  };
+}
+
+export async function checkUsername(username: string): Promise<UsernameCheckResult> {
+  const res = await fetch(
+    `${AUTH_URL}/username/check/${encodeURIComponent(username.toLowerCase().trim())}`,
+    { headers: { "Content-Type": "application/json" } },
+  );
+  return res.json() as Promise<UsernameCheckResult>;
+}
+
+// ── raldClaim — replace guestRegister ────────────────────────────────────────
+// Creates a first-class RALD identity via POST /auth/loop-claim.
+// Issues a real JWT immediately — no OTP required to enter Loop.
+// User's @username is reserved from day one, along with username@rald.me.
+// `needsVerification: true` is returned — Loop shows an async verification banner.
+export async function raldClaim(
+  username: string,
+  displayName: string,
+  region: string,
 ): Promise<{ token: string; user: AuthUser }> {
-  const email = `guest_${Math.random().toString(36).substring(2, 10)}@loop.guest`;
-  const password = Math.random().toString(36).substring(2, 18);
-
-  // Auth server validates 'name', not 'displayName'
-  const res = await fetch(`${AUTH_URL}/auth/register`, {
-    method: "POST",
+  const res = await fetch(`${AUTH_URL}/auth/loop-claim`, {
+    method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name: displayName }),
+    body: JSON.stringify({
+      username:     username.toLowerCase().trim(),
+      display_name: displayName.trim(),
+      region,
+    }),
   });
+
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Auth register failed: ${res.status} ${detail}`);
+    const detail = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(detail.error ?? `Identity claim failed: ${res.status}`);
   }
 
-  const data = (await res.json()) as { token: string; user: AuthServerUser };
-
-  const user: AuthUser = {
-    id: data.user.id,
-    email: data.user.email,
-    raldId: data.user.id,           // auth server uses 'id'; alias as raldId
-    displayName: displayName,       // use the display name the user typed
+  const data = await res.json() as {
+    ok:    boolean;
+    token: string;
+    user: {
+      id:                     string;
+      username:               string;
+      display_name:           string;
+      name:                   string;
+      role:                   string;
+      rald_internal_id:       string;
+      reserved_email_address: string;
+      trust_level:            string;
+      needs_verification:     boolean;
+      verification_url:       string;
+    };
   };
 
-  localStorage.setItem("loop_jwt", data.token);
-  localStorage.setItem("loop_user", JSON.stringify(user));
+  const user: AuthUser = {
+    id:                   data.user.id,
+    username:             data.user.username,
+    displayName:          displayName.trim(),
+    name:                 data.user.name,
+    raldId:               data.user.rald_internal_id,
+    reservedEmailAddress: data.user.reserved_email_address,
+    trustLevel:           data.user.trust_level,
+    needsVerification:    data.user.needs_verification,
+    verificationUrl:      data.user.verification_url,
+    region,
+  };
+
+  localStorage.setItem("loop_jwt",  data.token);
+  localStorage.setItem("loop_user", JSON.stringify({ ...user, isGuest: false }));
   return { token: data.token, user };
 }
 
@@ -155,7 +199,7 @@ export async function createRoom(opts: {
 
 export async function joinRoom(
   roomId: string,
-  role: "host" | "speaker" | "listener" = "listener"
+  role: "host" | "speaker" | "listener" = "listener",
 ): Promise<JoinResult> {
   const res = await apiFetch(
     `${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/join`,
@@ -163,14 +207,13 @@ export async function joinRoom(
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ product: "loop", role }),
-    }
+    },
   );
   if (!res.ok) throw new Error(`Join room failed: ${res.status}`);
   return res.json() as Promise<JoinResult>;
 }
 
 export async function leaveRoom(roomId: string): Promise<void> {
-  // fire-and-forget — never throws, never intercepts auth
   fetch(`${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/leave`, {
     method: "POST",
     headers: authHeaders(),
@@ -179,11 +222,11 @@ export async function leaveRoom(roomId: string): Promise<void> {
 }
 
 export async function getParticipants(
-  roomId: string
+  roomId: string,
 ): Promise<Array<{ userId: string; role: string; audioEnabled: boolean }>> {
   const res = await apiFetch(
     `${REALTIME_URL}/rooms/${encodeURIComponent(roomId)}/participants?product=loop`,
-    { headers: authHeaders() }
+    { headers: authHeaders() },
   );
   if (!res.ok) return [];
   const data = (await res.json()) as {

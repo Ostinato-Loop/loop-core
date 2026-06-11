@@ -1,33 +1,55 @@
 import { useState, useEffect, useCallback } from "react";
-import { guestRegister, type AuthUser } from "../lib/api";
+import { raldClaim, type AuthUser } from "../lib/api";
 
 export interface LocalUser {
-  id: string;
-  raldId: string;
-  displayName: string;
-  region: string;
+  id:                   string;
+  username:             string;
+  raldId:               string;
+  displayName:          string;
+  region:               string;
+  reservedEmailAddress: string;
+  trustLevel:           string;
+  needsVerification:    boolean;
+  verificationUrl:      string;
+  // isGuest is always false going forward — kept for backward compat reading old localStorage
   isGuest: boolean;
 }
 
-type StoredUser = AuthUser & { displayName?: string; region?: string; isGuest?: boolean };
+type StoredUser = AuthUser & {
+  displayName?:          string;
+  region?:               string;
+  isGuest?:              boolean;
+  // legacy guest fields — present in old localStorage values, safe to ignore
+  email?:                string;
+  reservedEmailAddress?: string;
+  needsVerification?:    boolean;
+  verificationUrl?:      string;
+  trustLevel?:           string;
+  username?:             string;
+};
 
 export function useAuth() {
-  const [user, setUser] = useState<LocalUser | null>(null);
+  const [user, setUser]       = useState<LocalUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Restore from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem("loop_user");
-    const token = localStorage.getItem("loop_jwt");
+    const token  = localStorage.getItem("loop_jwt");
     if (stored && token) {
       try {
         const parsed = JSON.parse(stored) as StoredUser;
         setUser({
-          id: parsed.id,
-          raldId: parsed.raldId ?? parsed.id,
-          displayName: parsed.displayName ?? "Listener",
-          region: parsed.region ?? "all",
-          isGuest: parsed.isGuest ?? true,
+          id:                   parsed.id,
+          username:             parsed.username ?? "",
+          raldId:               parsed.raldId ?? parsed.id,
+          displayName:          parsed.displayName ?? "Listener",
+          region:               parsed.region ?? "all",
+          reservedEmailAddress: parsed.reservedEmailAddress ?? "",
+          trustLevel:           parsed.trustLevel ?? "basic",
+          needsVerification:    parsed.needsVerification ?? !parsed.username,
+          verificationUrl:      parsed.verificationUrl ?? "https://profiles.rald.cloud/verify",
+          isGuest:              false,
         });
       } catch {
         localStorage.removeItem("loop_user");
@@ -44,20 +66,33 @@ export function useAuth() {
     return () => window.removeEventListener("loop:auth:expired", handler);
   }, []);
 
-  const register = useCallback(async (displayName: string, region: string) => {
+  /**
+   * register — called by Onboarding on completion.
+   * Now calls raldClaim() → real RALD identity, real JWT, @username reserved.
+   */
+  const register = useCallback(async (
+    username: string,
+    displayName: string,
+    region: string,
+  ) => {
     setLoading(true);
     try {
-      const { user: authUser } = await guestRegister(displayName);
+      const { user: authUser } = await raldClaim(username, displayName, region);
       const localUser: LocalUser = {
-        id: authUser.id,
-        raldId: authUser.raldId ?? authUser.id,
-        displayName,
+        id:                   authUser.id,
+        username:             authUser.username,
+        raldId:               authUser.raldId,
+        displayName:          authUser.displayName,
         region,
-        isGuest: true,
+        reservedEmailAddress: authUser.reservedEmailAddress,
+        trustLevel:           authUser.trustLevel,
+        needsVerification:    authUser.needsVerification,
+        verificationUrl:      authUser.verificationUrl,
+        isGuest:              false,
       };
-      // Persist region (guestRegister already wrote id/email/displayName to localStorage)
+      // raldClaim already wrote jwt + user to localStorage
       const stored = JSON.parse(localStorage.getItem("loop_user") ?? "{}") as Record<string, unknown>;
-      localStorage.setItem("loop_user", JSON.stringify({ ...stored, region, isGuest: true }));
+      localStorage.setItem("loop_user", JSON.stringify({ ...stored, region, isGuest: false }));
       setUser(localUser);
       return localUser;
     } finally {
@@ -74,8 +109,18 @@ export function useAuth() {
         return updated;
       });
     },
-    []
+    [],
   );
+
+  /** Mark verification complete — clears the verification banner. */
+  const markVerified = useCallback(() => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, needsVerification: false, trustLevel: "verified" };
+      localStorage.setItem("loop_user", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("loop_jwt");
@@ -83,5 +128,5 @@ export function useAuth() {
     setUser(null);
   }, []);
 
-  return { user, loading, register, updateProfile, logout };
+  return { user, loading, register, updateProfile, markVerified, logout };
 }
